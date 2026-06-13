@@ -8,28 +8,27 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, query, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
+        import { getDatabase, ref as dbRef, push, set, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
 
         // 🔥 TODO: 선생님의 Firebase 프로젝트 설정값으로 대치해주세요!
-const firebaseConfig = {
-  apiKey: "AIzaSyDiDsaxzbm5jCt-7lSndddBOPiIVYWFrPM",
-  authDomain: "kyungwon-lostcenter.firebaseapp.com",
-  projectId: "kyungwon-lostcenter",
-  storageBucket: "kyungwon-lostcenter.firebasestorage.app",
-  messagingSenderId: "944399737642",
-  appId: "1:944399737642:web:953deb90dae33c756a3453"
-};
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_AUTH_DOMAIN",
+            databaseURL: "YOUR_DATABASE_URL", // 👈 Realtime DB는 이 주소가 반드시 필요합니다! 콘솔 상단에 있는 https://... 주소를 넣어주세요.
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_STORAGE_BUCKET",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
 
         // Firebase 초기화
         const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
+        const db = getDatabase(app);
         const storage = getStorage(app);
 
-        // 글로벌 변수 및 함수 노출
-        window.currentTab = 'found'; // 기본 탭: 'found'(찾았습니다)
+        window.currentTab = 'found';
         
-        // 탭 변경 함수 ('찾았습니다' <=> '찾고있어요')
         window.switchTab = function(tab) {
             window.currentTab = tab;
             const foundTabBtn = document.getElementById('foundTabBtn');
@@ -39,22 +38,21 @@ const firebaseConfig = {
             const holderLabel = document.getElementById('holderLabel');
 
             if (tab === 'found') {
-                foundTabBtn.className = "flex-1 py-3 text-center font-bold border-b-4 border-indigo-600 text-indigo-600 bg-indigo-50/50 rounded-tl-xl transition";
-                lostTabBtn.className = "flex-1 py-3 text-center font-bold border-b-4 border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-tr-xl transition";
-                formTitle.innerText = "✨ 새로운 분실물 등록 (찾았습니다)";
+                foundTabBtn.className = "flex-1 py-3.5 text-center font-bold border-b-4 border-indigo-600 text-indigo-600 bg-indigo-50/50 rounded-tl-xl transition";
+                lostTabBtn.className = "flex-1 py-3.5 text-center font-bold border-b-4 border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-tr-xl transition";
+                formTitle.innerText = "✨ 분실물 등록";
                 locLabel.innerText = "📍 습득 장소";
                 holderLabel.innerText = "🎒 현재 보관 장소";
             } else {
-                foundTabBtn.className = "flex-1 py-3 text-center font-bold border-b-4 border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-tl-xl transition";
-                lostTabBtn.className = "flex-1 py-3 text-center font-bold border-b-4 border-indigo-600 text-indigo-600 bg-indigo-50/50 rounded-tr-xl transition";
-                formTitle.innerText = "🔍 잃어버린 물건 찾기 (찾고있어요)";
+                foundTabBtn.className = "flex-1 py-3.5 text-center font-bold border-b-4 border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-tl-xl transition";
+                lostTabBtn.className = "flex-1 py-3.5 text-center font-bold border-b-4 border-indigo-600 text-indigo-600 bg-indigo-50/50 rounded-tr-xl transition";
+                formTitle.innerText = "🔍 분실물 찾기";
                 locLabel.innerText = "📍 분실 예상 장소";
                 holderLabel.innerText = "👤 분실자 이름 / 학년-반";
             }
             loadData();
         }
 
-        // 모달 열기/닫기
         window.openModal = function() {
             document.getElementById('uploadModal').classList.remove('hidden');
             document.body.style.overflow = 'hidden';
@@ -65,7 +63,7 @@ const firebaseConfig = {
             document.getElementById('postForm').reset();
         }
 
-        // 데이터 등록 (Firebase 업로드)
+        // 데이터 등록 (Realtime DB 업로드)
         document.getElementById('postForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const submitBtn = document.getElementById('submitBtn');
@@ -83,17 +81,18 @@ const firebaseConfig = {
             let imageUrl = "";
 
             try {
-                // 이미지 업로드 처리 (Storage 저장)
                 if (fileInput.files.length > 0) {
                     const file = fileInput.files[0];
-                    const storageRef = ref(storage, 'lost_and_found/' + Date.now() + '_' + file.name);
-                    const snapshot = await uploadBytes(storageRef, file);
+                    const sRef = storageRef(storage, 'lost_and_found/' + Date.now() + '_' + file.name);
+                    const snapshot = await uploadBytes(sRef, file);
                     imageUrl = await getDownloadURL(snapshot.ref);
                 }
 
-                // Firestore 데이터 테이블 저장
-                await addDoc(collection(db, "posts"), {
-                    type: window.currentTab, // 'found' 또는 'lost' 구분값
+                // Realtime DB에 데이터 밀어넣기
+                const postsRef = dbRef(db, 'posts');
+                const newPostRef = push(postsRef);
+                await set(newPostRef, {
+                    type: window.currentTab,
                     title: title,
                     date: date,
                     location: location,
@@ -101,47 +100,51 @@ const firebaseConfig = {
                     contact: contact,
                     desc: desc,
                     imageUrl: imageUrl,
-                    createdAt: new Date()
+                    createdAt: Date.now()
                 });
 
                 alert("게시글이 성공적으로 등록되었습니다!");
                 closeModal();
             } catch (error) {
                 console.error("에러 발생: ", error);
-                alert("등록에 실패했습니다. Firebase 설정을 확인해주세요.");
+                alert("등록에 실패했습니다. 코드를 다시 확인해주세요.");
             } finally {
                 submitBtn.disabled = false;
                 submitBtn.innerText = "등록하기";
             }
         });
 
-        // 데이터 실시간 패치 및 화면 출력 자동 동기화
+        // Realtime DB 실시간 데이터 동기화 조회
         function loadData() {
             const grid = document.getElementById('itemGrid');
             grid.innerHTML = '<div class="col-span-full text-center py-10 text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>데이터를 불러오는 중입니다...</div>';
 
-            const q = query(collection(db, "posts"), orderBy("createdAt", "desc"));
+            const postsRef = dbRef(db, 'posts');
             
-            // 데이터 변경 시 자동 감지(onSnapshot) 리스너 구축
-            onSnapshot(q, (snapshot) => {
+            onValue(postsRef, (snapshot) => {
                 grid.innerHTML = "";
                 let count = 0;
+                const dataVal = snapshot.val();
 
-                snapshot.forEach((doc) => {
-                    const data = doc.data();
-                    
-                    // 현재 선택된 상단 탭 필터링 수행
+                if (!dataVal) {
+                    renderEmpty();
+                    return;
+                }
+
+                // 최신순 정렬을 위해 배열화
+                const postList = Object.keys(dataVal).map(key => dataVal[key]);
+                postList.sort((a, b) => b.createdAt - a.createdAt);
+
+                postList.forEach((data) => {
                     if (data.type === window.currentTab) {
                         count++;
                         const card = document.createElement('div');
                         card.className = "bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition duration-300 flex flex-col justify-between";
                         
-                        // 이미지 렌더링 예외 처리 (이미지 미지정 시 유려한 디폴트 아이콘 대체)
                         const imageArea = data.imageUrl 
                             ? `<div class="h-48 bg-gray-100 overflow-hidden"><img src="${data.imageUrl}" class="w-full h-full object-cover"></div>`
                             : `<div class="h-48 bg-gradient-to-br from-indigo-50 to-slate-100 flex items-center justify-center text-indigo-300"><i class="${data.type === 'found' ? 'fas fa-box-open' : 'fas fa-search'} text-5xl"></i></div>`;
 
-                        // 스마트 연동 링크 분석 (인스타 ID 분기 기능 포함)
                         let contactBtnHTML = "";
                         if (data.contact) {
                             if (data.contact.includes('instagram.com') || (!data.contact.includes('-') && !data.contact.startsWith('010') && data.contact.startsWith('@'))) {
@@ -179,18 +182,19 @@ const firebaseConfig = {
                     }
                 });
 
-                if (count === 0) {
-                    grid.innerHTML = `
-                        <div class="col-span-full text-center py-16 bg-white rounded-xl shadow-sm border border-dashed border-gray-200">
-                            <i class="fas fa-folder-open text-gray-300 text-5xl mb-3"></i>
-                            <p class="text-gray-500 text-sm">현재 카테고리에 등록된 게시글이 없습니다.</p>
-                        </div>
-                    `;
-                }
+                if (count === 0) renderEmpty();
             });
         }
 
-        // 통합 로컬 라이브 실시간 검색 필터
+        function renderEmpty() {
+            document.getElementById('itemGrid').innerHTML = `
+                <div class="col-span-full text-center py-16 bg-white rounded-xl shadow-sm border border-dashed border-gray-200">
+                    <i class="fas fa-folder-open text-gray-300 text-5xl mb-3"></i>
+                    <p class="text-gray-500 text-sm">현재 카테고리에 등록된 게시글이 없습니다.</p>
+                </div>
+            `;
+        }
+
         window.searchItems = function() {
             const query = document.getElementById('searchInput').value.toLowerCase();
             const cards = document.getElementById('itemGrid').children;
@@ -206,7 +210,6 @@ const firebaseConfig = {
             }
         }
 
-        // 로드 즉시 실행 초기화 리스너
         window.addEventListener('DOMContentLoaded', () => {
             loadData();
         });
@@ -220,21 +223,18 @@ const firebaseConfig = {
                 <span class="text-2xl">🏫</span>
                 <h1 class="text-lg md:text-xl font-extrabold tracking-tight">경원고등학교 분실물 센터</h1>
             </div>
-            <span class="text-xs md:text-sm bg-indigo-700 px-3 py-1 rounded-full text-indigo-100 font-medium hidden sm:inline-block">
-                🤝 우리들의 소중한 연결망
             </span>
         </div>
     </nav>
 
     <main class="flex-grow max-w-5xl w-full mx-auto px-4 py-6 md:py-10">
-        
         <div class="bg-white rounded-xl shadow-sm border border-slate-100 mb-6 md:mb-8 overflow-hidden">
             <div class="flex border-b border-gray-100">
                 <button id="foundTabBtn" onclick="switchTab('found')" class="flex-1 py-3.5 text-center font-bold border-b-4 border-indigo-600 text-indigo-600 bg-indigo-50/50 rounded-tl-xl transition">
-                    <i class="fas fa-box-open mr-2"></i>주인을 찾습니다 (찾았습니다)
+                    <i class="fas fa-box-open mr-2"></i>분실물 찾았어요
                 </button>
                 <button id="lostTabBtn" onclick="switchTab('lost')" class="flex-1 py-3.5 text-center font-bold border-b-4 border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-tr-xl transition">
-                    <i class="fas fa-search mr-2"></i>물건을 찾습니다 (찾고있어요)
+                    <i class="fas fa-search mr-2"></i>붑실물 찾고있어요
                 </button>
             </div>
             
@@ -282,36 +282,4 @@ const firebaseConfig = {
                 <div class="grid grid-cols-2 gap-3">
                     <div>
                         <label id="holderLabel" class="block text-xs font-bold text-gray-500 mb-1">🎒 현재 보관 장소</label>
-                        <input type="text" id="itemHolder" required placeholder="예: 1학년 교무실 홍길동 선생님께" 
-                               class="w-full border border-slate-200 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold text-gray-500 mb-1">💬 연락 가능한 수단</label>
-                        <input type="text" id="itemContact" required placeholder="예: 인스타ID(@아이디) 또는 010-XXXX" 
-                               class="w-full border border-slate-200 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-gray-500 mb-1">📝 특징 및 세부 설명</label>
-                    <textarea id="itemDesc" rows="3" placeholder="주인을 특정하는 데 도움이 될 만한 상세 특징을 기록해주세요." 
-                              class="w-full border border-slate-200 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-gray-500 mb-1">📸 현장 증거 이미지 파일</label>
-                    <input type="file" id="itemImage" accept="image/*" 
-                           class="w-full text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
-                </div>
-                <div class="flex gap-2 pt-2 border-t">
-                    <button type="button" onclick="closeModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 rounded-lg transition">취소</button>
-                    <button type="submit" id="submitBtn" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 rounded-lg transition shadow-md">등록하기</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <footer class="bg-slate-800 text-slate-400 text-center py-4 text-xs md:text-sm mt-auto">
-        <p>© 2026 경원고등학교 학생자치위원회 분실물 매칭 허브센터.</p>
-    </footer>
-
-</body>
-</html>
+                        <input type="
